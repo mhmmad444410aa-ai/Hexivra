@@ -41,8 +41,14 @@ jobs:
       - name: Configure Android SDK
         shell: bash
         run: |
-          sdkmanager 'platform-tools' 'platforms;android-36' 'build-tools;36.0.0'
-          install -d "$HOME/.config/godot"
+          export ANDROID_HOME="$RUNNER_TEMP/android-sdk"
+          curl -fsSL --retry 3 https://dl.google.com/android/repository/platform-tools-latest-linux.zip -o "$RUNNER_TEMP/platform-tools.zip"
+          curl -fsSL --retry 3 https://dl.google.com/android/repository/build-tools_r36_linux.zip -o "$RUNNER_TEMP/build-tools.zip"
+          install -d "$ANDROID_HOME/build-tools" "$HOME/.config/godot"
+          unzip -q "$RUNNER_TEMP/platform-tools.zip" -d "$ANDROID_HOME"
+          unzip -q "$RUNNER_TEMP/build-tools.zip" -d "$ANDROID_HOME/build-tools"
+          mv "$ANDROID_HOME/build-tools/android-16" "$ANDROID_HOME/build-tools/36.0.0"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
           printf '[gd_resource type="EditorSettings" format=3]\n\n[resource]\nexport/android/android_sdk_path = "%s"\nexport/android/java_sdk_path = "%s"\n' "$ANDROID_HOME" "$JAVA_HOME" > "$HOME/.config/godot/editor_settings-4.7.tres"
       - name: Import and test
         shell: bash
