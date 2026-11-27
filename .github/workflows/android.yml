@@ -1,67 +1,135 @@
 name: Android validation and build
+
 on:
   push:
-    branches: [main]
+    branches: [main, hexivra-rebuild]
+  pull_request:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish a signed production release
+        type: boolean
+        default: false
+
 permissions:
   contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      GODOT_VERSION: 4.5.1
-      GODOT_ANDROID_KEYSTORE_RELEASE: ${{ github.workspace }}/release.jks
-      GODOT_ANDROID_KEYSTORE_RELEASE_USER: ${{ secrets.KEY_ALIAS }}
-      GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-      KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+      GODOT_VERSION: 4.7.2
+    outputs:
+      version: ${{ steps.apk.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-      - name: Install Godot and templates
+      - name: Install Godot and Android templates
+        shell: bash
         run: |
           base="https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable"
-          curl -fL --retry 3 "$base/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip" -o godot.zip
-          unzip -q godot.zip
-          sudo install "Godot_v${GODOT_VERSION}-stable_linux.x86_64" /usr/local/bin/godot
-          curl -fL --retry 3 "$base/Godot_v${GODOT_VERSION}-stable_export_templates.tpz" -o templates.tpz
-          unzip -q templates.tpz
-          mkdir -p "$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
-          mv templates/* "$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable/"
-          rm -rf templates templates.tpz godot.zip Godot_v*
-      - name: Configure Android
+          binary="Godot_v${GODOT_VERSION}-stable_linux.x86_64"
+          curl -fsSL --retry 3 "$base/$binary.zip" -o "$RUNNER_TEMP/godot.zip"
+          unzip -q "$RUNNER_TEMP/godot.zip" -d "$RUNNER_TEMP"
+          sudo install "$RUNNER_TEMP/$binary" /usr/local/bin/godot
+          curl -fsSL --retry 3 "$base/Godot_v${GODOT_VERSION}-stable_export_templates.tpz" -o "$RUNNER_TEMP/templates.tpz"
+          install -d "$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+          unzip -oj "$RUNNER_TEMP/templates.tpz" templates/android_debug.apk templates/android_release.apk templates/version.txt -d "$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+      - name: Configure Android SDK
+        shell: bash
         run: |
-          mkdir -p "$HOME/.config/godot"
-          printf '[gd_resource type="EditorSettings" format=3]\n\n[resource]\nexport/android/android_sdk_path = "%s"\nexport/android/java_sdk_path = "%s"\n' "$ANDROID_HOME" "$JAVA_HOME" > "$HOME/.config/godot/editor_settings-4.5.tres"
-          keytool -genkeypair -keystore "$HOME/debug.keystore" -storepass android -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug"
-          echo "GODOT_ANDROID_KEYSTORE_DEBUG_PATH=$HOME/debug.keystore" >> "$GITHUB_ENV"
-          echo "GODOT_ANDROID_KEYSTORE_DEBUG_USER=androiddebugkey" >> "$GITHUB_ENV"
-          echo "GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD=android" >> "$GITHUB_ENV"
+          sdkmanager 'platform-tools' 'platforms;android-36' 'build-tools;36.0.0'
+          install -d "$HOME/.config/godot"
+          printf '[gd_resource type="EditorSettings" format=3]\n\n[resource]\nexport/android/android_sdk_path = "%s"\nexport/android/java_sdk_path = "%s"\n' "$ANDROID_HOME" "$JAVA_HOME" > "$HOME/.config/godot/editor_settings-4.7.tres"
       - name: Import and test
+        shell: bash
         run: |
-          godot --headless --editor --import --path . --quit
-          godot --headless --path . --script res://tests/puzzle_test.gd
-          godot --headless --path . --quit-after 10
-      - name: Export APK
+          godot --headless --editor --import --quit 2>&1 | tee "$RUNNER_TEMP/import.log"
+          godot --headless --script res://tests/puzzle_test.gd 2>&1 | tee "$RUNNER_TEMP/puzzles.log"
+          XDG_DATA_HOME="$(mktemp -d)" godot --headless --script res://tests/game_test.gd 2>&1 | tee "$RUNNER_TEMP/game.log"
+          if grep -E '(^| )(SCRIPT ERROR|ERROR):' "$RUNNER_TEMP"/{import,puzzles,game}.log; then exit 1; fi
+      - name: Export debug APK
+        if: ${{ !inputs.publish }}
+        shell: bash
+        env:
+          GODOT_ANDROID_KEYSTORE_DEBUG_USER: androiddebugkey
+          GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD: android
         run: |
+          export GODOT_ANDROID_KEYSTORE_DEBUG_PATH="$RUNNER_TEMP/debug.keystore"
+          keytool -genkeypair -keystore "$GODOT_ANDROID_KEYSTORE_DEBUG_PATH" -storepass android -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 365 -dname "CN=Android Debug"
           mkdir -p build
-          if [ -n "$KEYSTORE_BASE64" ]; then
-            printf '%s' "$KEYSTORE_BASE64" | base64 -d > release.jks
-            godot --headless --path . --export-release Android build/Hexivra-release.apk
-          else
-            unset GODOT_ANDROID_KEYSTORE_RELEASE GODOT_ANDROID_KEYSTORE_RELEASE_USER GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD
-            godot --headless --path . --export-debug Android build/Hexivra-debug.apk
-          fi
-          test -n "$(find build -name '*.apk' -size +0c -print -quit)"
-          sha256sum build/*.apk > build/SHA256SUMS.txt
-          apksigner=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)
-          for apk in build/*.apk; do "$apksigner" verify --print-certs "$apk" > "$apk.cert.txt"; done
+          godot --headless --export-debug Android build/Hexivra-debug.apk
+      - name: Export with the original production key
+        if: ${{ inputs.publish }}
+        shell: bash
+        env:
+          GODOT_ANDROID_KEYSTORE_RELEASE_USER: ${{ secrets.KEY_ALIAS }}
+          GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          ORIGINAL_CERT_SHA256: ${{ vars.ORIGINAL_CERT_SHA256 }}
+          PUBLISHED_VERSION_CODE: ${{ vars.PUBLISHED_VERSION_CODE }}
+          PRODUCTION_READY: ${{ vars.PRODUCTION_READY }}
+        run: |
+          test "$GITHUB_REF" = refs/heads/main
+          test "$PRODUCTION_READY" = true
+          test -n "$KEYSTORE_BASE64"
+          test -n "$GODOT_ANDROID_KEYSTORE_RELEASE_USER"
+          test -n "$GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD"
+          [[ "$PUBLISHED_VERSION_CODE" =~ ^[0-9]+$ ]]
+          code=$(sed -n 's/^version\/code=//p' export_presets.cfg)
+          test "$code" -gt "$PUBLISHED_VERSION_CODE"
+          expected=$(printf '%s' "$ORIGINAL_CERT_SHA256" | tr -d ':' | tr '[:upper:]' '[:lower:]')
+          [[ "$expected" =~ ^[a-f0-9]{64}$ ]]
+          export GODOT_ANDROID_KEYSTORE_RELEASE_PATH="$RUNNER_TEMP/hexivra-release.keystore"
+          trap 'rm -f "$GODOT_ANDROID_KEYSTORE_RELEASE_PATH"' EXIT
+          umask 077
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$GODOT_ANDROID_KEYSTORE_RELEASE_PATH"
+          mkdir -p build
+          godot --headless --export-release Android build/Hexivra-release.apk
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs build/Hexivra-release.apk > "$RUNNER_TEMP/production-cert.txt"
+          actual=$(awk '/^Signer #1 certificate SHA-256 digest:/{print $NF}' "$RUNNER_TEMP/production-cert.txt")
+          test "$actual" = "$expected"
+      - name: Verify APK metadata and checksum
+        id: apk
+        shell: bash
+        run: |
+          shopt -s nullglob
+          apks=(build/*.apk)
+          test "${#apks[@]}" -eq 1
+          apk="${apks[0]}"
+          tools="$ANDROID_HOME/build-tools/36.0.0"
+          "$tools/apksigner" verify --verbose --print-certs "$apk" > "$apk.cert.txt"
+          "$tools/aapt" dump badging "$apk" > "$apk.metadata.txt"
+          version=$(sed -n 's/^version\/name="\(.*\)"$/\1/p' export_presets.cfg)
+          code=$(sed -n 's/^version\/code=//p' export_presets.cfg)
+          grep -F "package: name='com.mhmmad.hexivra' versionCode='$code' versionName='$version'" "$apk.metadata.txt"
+          (cd build && sha256sum *.apk > SHA256SUMS.txt)
+          stat -c '%s bytes' "$apk" > "$apk.size.txt"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
           name: Hexivra-Android
           path: build/
-      - name: Remove signing key
-        if: always()
-        run: rm -f release.jks
+          if-no-files-found: error
+
+  publish:
+    if: ${{ inputs.publish }}
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Hexivra-Android
+          path: build
+      - name: Publish verified APK
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          gh release create "v$VERSION" build/* --target "$GITHUB_SHA" --repo "$GITHUB_REPOSITORY" --generate-notes
