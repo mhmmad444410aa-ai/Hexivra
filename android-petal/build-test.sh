@@ -42,6 +42,10 @@ xml = manifest.read_text()
 xml = xml.replace("    <application", """    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" tools:node="remove" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" tools:node="remove" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" tools:node="remove" />
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:node="remove" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" tools:node="remove" />
+    <uses-permission android:name="com.hihonor.permission.MANAGE_FOLD_SCREEN" tools:node="remove" />
+    <uses-permission android:name="com.hihonor.permission.MANAGE_FOLD_SCREEN_PRIVILEGED" tools:node="remove" />
 
     <application""")
 xml = xml.replace("        <profileable", """        <meta-data android:name="org.godotengine.plugin.v2.HexivraPetal"
