@@ -3,6 +3,19 @@ extends SceneTree
 const MAIN = preload("res://Main.tscn")
 var game: Node3D
 
+class TestAds extends RefCounted:
+	var loaded := false
+	var banner_visible := false
+
+	func showBanner(visible: bool) -> void:
+		banner_visible = visible
+
+	func bannerHeightPx() -> int:
+		return 0
+
+	func betweenLevels() -> bool:
+		return loaded
+
 func _initialize() -> void:
 	call_deferred("run")
 
@@ -33,7 +46,11 @@ func run() -> void:
 	touch.pressed = true
 	touch.position = game.view.camera.unproject_position(game.view.world_pos(hint.cell) + Vector3.UP * 0.25)
 	game._unhandled_input(touch)
-	await create_timer(0.23).timeout
+	var deadline := Time.get_ticks_msec() + 3000
+	while game.moving and Time.get_ticks_msec() < deadline:
+		await process_frame
+	if not require(not game.moving, "Tile rotation tween did not finish"):
+		return
 	if not require(game.moves == 1, "Projected touch did not rotate one tile"):
 		return
 	game.pause_game()
@@ -82,7 +99,26 @@ func run() -> void:
 	game._process(0.0)
 	if not require(game.screen == "timeout", "Timer did not expire"):
 		return
-	print("Screens, 8 mode entry points, synthetic touch, pause, persistence, translations, RTL, rewards and timeout passed")
+	var test_ads := TestAds.new()
+	game.ads = test_ads
+	game.profile.data.wins = 9
+	game.mode = 0
+	game.level = 1
+	game.screen = "victory"
+	game.continue_to_next()
+	if not require(game.screen == "game" and game.level == 2 and test_ads.banner_visible,
+			"An unavailable ad interrupted the next level"):
+		return
+	test_ads.loaded = true
+	game.screen = "victory"
+	game.continue_to_next()
+	if not require(game.screen == "transition" and game.level == 2 and not test_ads.banner_visible,
+			"The ad did not stay between levels"):
+		return
+	game.finish_ad_transition()
+	if not require(game.screen == "game" and game.level == 3, "Ad dismissal did not resume play"):
+		return
+	print("Screens, 8 mode entry points, synthetic touch, pause, persistence, translations, RTL, rewards, timeout and ad transition fallback passed")
 	game.queue_free()
 	await process_frame
 	quit(0)

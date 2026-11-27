@@ -7,7 +7,7 @@ const TEMP := "user://progress.next.cfg"
 var data := {
 	"progress": {}, "stars": {}, "crystals": 0, "xp": 0, "wins": 0,
 	"locale": 0, "quality": 1, "sound": true, "vibration": true,
-	"skin": 0, "mission": {}, "active": {},
+	"skin": 0, "mission": {}, "active": {}, "petal_consent": false,
 }
 
 func load_profile() -> void:

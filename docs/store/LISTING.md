@@ -1,6 +1,6 @@
 # Hexivra store copy
 
-Use the [512 × 512 launcher art](../../assets/branding/icon.png), [1024 × 500 feature graphic](feature-graphic.png), and [six in-engine desktop captures](screens/). The captures use a portrait window and include a seeded level-map save for illustration. Replace or supplement them with Android captures if required for the selected devices or storefront.
+Use the [512 × 512 launcher art](../../assets/branding/icon.png), [1024 × 500 feature graphic](feature-graphic.png), [six in-engine desktop captures](screens/), and [the 19-second gameplay video](gameplay.mp4). The captures use a portrait window and include a seeded level-map save for illustration. Replace or supplement them with Android captures if required for the selected devices or storefront.
 
 ## English (UK)
 

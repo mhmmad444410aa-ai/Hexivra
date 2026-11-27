@@ -13,5 +13,6 @@ The puzzle test follows generated hints to a valid solution for the 400 campaign
 
 - [Verification and remaining release work](docs/VERIFICATION.md)
 - [Store copy and captures](docs/store/LISTING.md)
+- [Optional Petal Ads test build](docs/PETAL_TEST.md)
 - [Privacy notice for the offline build](docs/PRIVACY.md)
 - [Assets and licences](THIRD_PARTY_NOTICES.md)

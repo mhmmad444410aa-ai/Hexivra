@@ -55,4 +55,13 @@ const TEXT = {
 	"repair": ["Repair the marked tile", "أصلح القطعة المحددة", "Repare a peça marcada"],
 	"switch": ["Close the marked switch", "أغلق المفتاح المحدد", "Feche a chave marcada"],
 	"activate": ["Tap the marked reactor", "المس المفاعل المحدد", "Toque no reator marcado"],
+	"petal_privacy": ["Test advertising privacy", "خصوصية الإعلانات الاختبارية", "Privacidade dos anúncios de teste"],
+	"petal_detail": [
+		"This internal build can request non-personalised test ads from Huawei. Huawei may process device and network information to deliver and measure those ads. The game does not request location for ads. You can withdraw this consent here.",
+		"يمكن لهذا الإصدار الداخلي طلب إعلانات اختبارية غير مخصصة من Huawei. قد تعالج Huawei معلومات الجهاز والشبكة لعرض الإعلانات وقياسها. لا تطلب اللعبة الموقع للإعلانات. يمكنك سحب موافقتك هنا.",
+		"Esta versão interna pode solicitar anúncios de teste não personalizados da Huawei. A Huawei pode processar dados do dispositivo e da rede para exibir e medir esses anúncios. O jogo não solicita localização para anúncios. Você pode revogar seu consentimento aqui.",
+	],
+	"petal_sdk_notice": ["Huawei SDK privacy statement", "بيان خصوصية Huawei SDK", "Declaração de privacidade da Huawei"],
+	"petal_allow": ["Allow Huawei test data processing", "السماح بمعالجة بيانات الاختبار لدى Huawei", "Autorizar o tratamento de dados de teste"],
+	"petal_revoke": ["Withdraw test consent", "سحب الموافقة على الاختبار", "Revogar o consentimento de teste"],
 }

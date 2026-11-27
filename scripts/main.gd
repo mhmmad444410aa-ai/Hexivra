@@ -41,6 +41,9 @@ var progress_bar: ProgressBar
 var sound := AudioStreamPlayer.new()
 var last_save_second := -1
 var audio: Dictionary = {}
+var ads: Object
+var next_after_ad := 0
+var last_ad_ms := -90000
 
 func _ready() -> void:
 	profile.load_profile()
@@ -59,6 +62,10 @@ func _ready() -> void:
 		var path := "res://assets/audio/%s.ogg" % event
 		if ResourceLoader.exists(path):
 			audio[event] = load(path)
+	if Engine.has_singleton("HexivraPetal"):
+		ads = Engine.get_singleton("HexivraPetal")
+		ads.connect("transition_finished", func(): call_deferred("finish_ad_transition"))
+		ads.commissioningConsent(profile.data.petal_consent)
 	show_home()
 
 func tr_key(key: String) -> String:
@@ -118,6 +125,8 @@ func spacer(parent: Control) -> void:
 
 func page(name: String, title: String, gameplay := false) -> void:
 	screen = name
+	if ads:
+		ads.showBanner(name in ["home", "game"])
 	for child in overlay.get_children():
 		overlay.remove_child(child)
 		child.queue_free()
@@ -245,11 +254,49 @@ func show_settings() -> void:
 		toggle.toggled.connect(func(enabled): profile.data[key] = enabled; profile.store())
 		list.add_child(toggle)
 	button(list, tr_key("privacy"), func(): OS.shell_open(PRIVACY_URL), 58)
+	if ads:
+		button(list, tr_key("petal_privacy"), show_petal_privacy, 58)
 	label(list, tr_key("privacy_detail"), 20)
 	label(list, "Hexivra 2.0.0", 20)
 	button(list, "Sci-Fi Laboratory · vinish.dev · CC BY 4.0", func():
 		OS.shell_open("https://vinish.dev/free-3d-models/sci-fi-laboratory"), 56)
 	button(ui, tr_key("back"), show_home)
+
+func show_petal_privacy() -> void:
+	page("petal_privacy", tr_key("petal_privacy"))
+	label(ui, tr_key("petal_detail"), 24)
+	button(ui, tr_key("petal_sdk_notice"), func():
+		OS.shell_open("https://developer.huawei.com/consumer/en/doc/hmscore-guides/whale-hong-kinetic-energy-sdk-privacy-statement-0000001658283582/"), 63)
+	spacer(ui)
+	button(ui, tr_key("petal_allow"), func(): set_test_ad_consent(true))
+	button(ui, tr_key("petal_revoke"), func(): set_test_ad_consent(false))
+	button(ui, tr_key("back"), show_settings)
+
+func set_test_ad_consent(allowed: bool) -> void:
+	profile.data.petal_consent = allowed
+	profile.store()
+	ads.commissioningConsent(allowed)
+	show_settings()
+
+func continue_to_next() -> void:
+	var next := level + 1
+	var now := Time.get_ticks_msec()
+	if ads and profile.data.wins % 3 == 0 and now - last_ad_ms >= 90000:
+		next_after_ad = next
+		page("transition", tr_key("next"))
+		if ads.betweenLevels():
+			last_ad_ms = now
+			spacer(ui)
+			button(ui, tr_key("continue"), finish_ad_transition)
+			return
+		next_after_ad = 0
+	start_level(next)
+
+func finish_ad_transition() -> void:
+	if next_after_ad > 0:
+		var target := next_after_ad
+		next_after_ad = 0
+		start_level(target)
 
 func show_achievements() -> void:
 	page("achievements", tr_key("achievements"))
@@ -387,6 +434,10 @@ func pause_game() -> void:
 	button(ui, tr_key("back"), show_home)
 
 func _process(delta: float) -> void:
+	if ads and screen in ["home", "game"]:
+		var pixel_height: int = ads.bannerHeightPx()
+		var ratio := overlay.size.y / maxf(1.0, get_window().size.y)
+		ui.offset_bottom = -44.0 - (pixel_height + 12) * ratio if pixel_height > 0 else -44.0
 	if screen == "game" and mode == 4 and not moving:
 		elapsed += delta
 		var remaining := maxi(0, ceili(puzzle.time_limit - elapsed))
@@ -414,7 +465,7 @@ func finish() -> void:
 	label(ui, tr_key("moves") % moves, 24)
 	spacer(ui)
 	if mode == 6 or (mode < 6 and level < Puzzle.COUNTS[mode]):
-		button(ui, tr_key("next"), func(): start_level(level + 1))
+		button(ui, tr_key("next"), continue_to_next)
 	button(ui, tr_key("retry"), func(): start_level(level))
 	button(ui, tr_key("back"), show_home)
 
@@ -440,6 +491,10 @@ func interact(p: Vector2i) -> void:
 	else:
 		save_active()
 
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_PAUSED and screen == "game":
+		save_active()
+
 func _unhandled_input(event: InputEvent) -> void:
 	if screen != "game" or moving:
 		return
@@ -447,6 +502,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch and event.pressed and event.index == 0:
 		point = event.position
 	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		if event.device == InputEvent.DEVICE_ID_EMULATION:
+			return
 		point = event.position
 	else:
 		return
