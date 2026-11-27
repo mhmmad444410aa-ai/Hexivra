@@ -1,224 +1,512 @@
 extends Node3D
 
 const Puzzle = preload("res://scripts/puzzle.gd")
-var puzzle = Puzzle.new()
-var board := Node3D.new()
-var tiles := {}
-var tracks := {}
-var rotations := {}
-var camera := Camera3D.new()
-var status := Label.new()
-var level := 1
-var moves := 0
-var locked := false
+const BoardView = preload("res://scripts/board_view.gd")
+const Profile = preload("res://scripts/profile.gd")
+const Strings = preload("res://scripts/strings.gd")
+const BUTTONS = [
+	preload("res://assets/ui/btn_large.png"),
+	preload("res://assets/ui/btn_large_hover.png"),
+	preload("res://assets/ui/btn_large_click.png"),
+]
+const LEVEL_STYLES = [
+	preload("res://assets/ui/level-open.png"),
+	preload("res://assets/ui/level-hover.png"),
+	preload("res://assets/ui/level-locked.png"),
+]
+const PRIVACY_URL := "https://raw.githubusercontent.com/mhmmad444410aa-ai/Hexivra/34974c64257a812bd4710bcbe6e2e29fe155025b/docs/PRIVACY.md"
+const MODE_COLOURS = ["#7af2ff", "#ae9cff", "#ffcc82", "#fa87b9", "#9be5ae", "#ff9f85", "#79adf9", "#7debe0"]
+const LANGUAGES = ["English (UK)", "العربية", "Português (Brasil)"]
+const ACCENT := Color("#76f4ff")
+const INK := Color("#dcf1ff")
+
+var puzzle := Puzzle.new()
+var view := BoardView.new()
+var profile := Profile.new()
+var overlay := Control.new()
+var ui: VBoxContainer
+var screen := ""
 var mode := 0
-var mode_names = ["Classic","Multi Energy","Reactor","Laser","Time Challenge","Broken Circuit","Endless","Daily Challenge"]
-var counts = [100,80,60,60,50,50,0,0]
-var progress = {}
-var crystals := 0
+var level := 1
+var date := ""
+var moves := 0
 var elapsed := 0.0
-var awarded := false
-var hint_label := Label.new()
-
-func load_progress() -> void:
-	var cfg := ConfigFile.new()
-	if cfg.load("user://progress.cfg") == OK:
-		progress = cfg.get_value("game","progress",{})
-		crystals = cfg.get_value("game","crystals",0)
-
-func save_progress() -> void:
-	var cfg := ConfigFile.new()
-	cfg.set_value("game","progress",progress)
-	cfg.set_value("game","crystals",crystals)
-	cfg.save("user://progress.cfg")
-
-func _process(delta: float) -> void:
-	if mode == 4 and not awarded and not locked:
-		elapsed += delta
-		hint_label.text = "Time: %d s" % maxi(0,120-int(elapsed))
-		if elapsed >= 120:
-			locked = true
-			hint_label.text = "Time expired — restart"
-
-func hint() -> void:
-	if locked or awarded or crystals < 1:
-		return
-	for p in puzzle.cells:
-		if puzzle.masks[p] != puzzle.solved[p]:
-			crystals -= 1
-			save_progress()
-			hint_label.text = "Hint: highlighted tile"
-			var tween := create_tween()
-			tween.tween_property(tiles[p],"position:y",0.35,0.15)
-			tween.tween_property(tiles[p],"position:y",0.0,0.25)
-			return
-
-
-func material(c: Color, emission: bool = false) -> StandardMaterial3D:
-	var m := StandardMaterial3D.new()
-	m.albedo_color = c
-	m.metallic = 0.45
-	m.roughness = 0.35
-	if emission:
-		m.emission_enabled = true
-		m.emission = c
-		m.emission_energy_multiplier = 1.5
-	return m
+var moving := false
+var hint_count := 0
+var move_label: Label
+var energy_label: Label
+var task_label: Label
+var hint_label: Label
+var progress_bar: ProgressBar
+var sound := AudioStreamPlayer.new()
+var last_save_second := -1
+var audio: Dictionary = {}
+var ads: Object
+var next_after_ad := 0
+var last_ad_ms := -90000
 
 func _ready() -> void:
-	load_progress()
-	add_child(board)
-	add_child(camera)
-	camera.position = Vector3(0,12,0)
-	camera.rotation_degrees = Vector3(-90,0,0)
-	camera.projection = Camera3D.PROJECTION_ORTHOGONAL
-	camera.size = 13
-	camera.current = true
-	var env := WorldEnvironment.new()
-	env.environment = Environment.new()
-	env.environment.background_mode = Environment.BG_COLOR
-	env.environment.background_color = Color("#080d1d")
-	env.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.environment.ambient_light_color = Color("#b1c8ff")
-	env.environment.ambient_light_energy = 0.8
-	add_child(env)
-	var light := DirectionalLight3D.new()
-	light.rotation_degrees = Vector3(-60,25,0)
-	add_child(light)
+	profile.load_profile()
+	profile.data.locale = clampi(profile.data.locale, 0, 2)
+	profile.data.quality = clampi(profile.data.quality, 0, 2)
+	add_child(view)
+	view.set_quality(profile.data.quality)
 	var layer := CanvasLayer.new()
 	add_child(layer)
-	var menu := VBoxContainer.new()
-	layer.add_child(menu)
-	menu.position = Vector2(24,24)
-	var title := Label.new()
-	title.text = "HEXIVRA"
-	title.add_theme_font_size_override("font_size",48)
-	menu.add_child(title)
-	status.add_theme_font_size_override("font_size",24)
-	menu.add_child(status)
-	var selector := OptionButton.new()
-	for i in range(mode_names.size()):
-		selector.add_item(mode_names[i],i)
-	menu.add_child(selector)
-	selector.item_selected.connect(func(index):
-		mode = index
-		level = int(progress.get(str(mode),1))
-		start_level()
-	)
-	menu.add_child(hint_label)
-	var hint_button := Button.new()
-	hint_button.text = "Hint"
-	menu.add_child(hint_button)
-	hint_button.pressed.connect(hint)
-	var retry := Button.new()
-	retry.text = "Restart"
-	retry.custom_minimum_size = Vector2(160,54)
-	menu.add_child(retry)
-	retry.pressed.connect(start_level)
-	var next := Button.new()
-	next.text = "Next level"
-	next.custom_minimum_size = Vector2(160,54)
-	menu.add_child(next)
-	next.pressed.connect(func():
-		if puzzle.is_solved():
-			if counts[mode] == 0 or level < counts[mode]:
-				level += 1
-				start_level()
-	)
-	start_level()
+	layer.add_child(overlay)
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(sound)
+	sound.volume_db = -14
+	for event in ["button", "rotate", "repair", "activate", "success"]:
+		var path := "res://assets/audio/%s.ogg" % event
+		if ResourceLoader.exists(path):
+			audio[event] = load(path)
+	if Engine.has_singleton("HexivraPetal"):
+		ads = Engine.get_singleton("HexivraPetal")
+		ads.connect("transition_finished", func(): call_deferred("finish_ad_transition"))
+		ads.commissioningConsent(profile.data.petal_consent)
+	show_home()
 
-func world_pos(p: Vector2i) -> Vector3:
-	return Vector3(1.732 * (p.x + p.y * 0.5),0,1.5*p.y)
+func tr_key(key: String) -> String:
+	return Strings.TEXT[key][profile.data.locale]
 
-func start_level() -> void:
-	for child in board.get_children():
-		board.remove_child(child)
+func mode_title(index: int) -> String:
+	return Strings.MODES[index][profile.data.locale]
+
+func today() -> String:
+	return Time.get_date_string_from_system()
+
+func play_sound(event: String) -> void:
+	if profile.data.sound and audio.has(event):
+		sound.stop()
+		sound.stream = audio[event]
+		sound.play()
+
+func label(parent: Control, value: String, size: int, colour := INK) -> Label:
+	var node := Label.new()
+	node.text = value
+	node.add_theme_font_size_override("font_size", size)
+	node.add_theme_color_override("font_color", colour)
+	node.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	node.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	parent.add_child(node)
+	return node
+
+func button(parent: Control, value: String, callback: Callable, minimum := 67) -> Button:
+	var node := Button.new()
+	node.text = value
+	node.custom_minimum_size.y = minimum
+	node.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	node.add_theme_font_size_override("font_size", 27)
+	node.add_theme_color_override("font_color", INK)
+	node.add_theme_color_override("font_hover_color", ACCENT)
+	for i in range(3):
+		var style := StyleBoxTexture.new()
+		style.texture = BUTTONS[i]
+		for side in [SIDE_LEFT, SIDE_TOP, SIDE_RIGHT, SIDE_BOTTOM]:
+			style.set_texture_margin(side, 7)
+		style.modulate_color = Color("#bbcfff") if i == 0 else Color("#7defff")
+		node.add_theme_stylebox_override(["normal", "hover", "pressed"][i], style)
+	node.pressed.connect(func(): play_sound("button"); callback.call())
+	node.button_down.connect(func():
+		node.pivot_offset = node.size * 0.5
+		node.create_tween().tween_property(node, "scale", Vector2.ONE * 0.975, 0.08))
+	node.button_up.connect(func():
+		node.create_tween().tween_property(node, "scale", Vector2.ONE, 0.11))
+	parent.add_child(node)
+	return node
+
+func spacer(parent: Control) -> void:
+	var space := Control.new()
+	space.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	space.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(space)
+
+func page(name: String, title: String, gameplay := false) -> void:
+	screen = name
+	if ads:
+		ads.showBanner(name in ["home", "game"])
+	for child in overlay.get_children():
+		overlay.remove_child(child)
 		child.queue_free()
-	tiles.clear()
-	tracks.clear()
-	rotations.clear()
-	moves = 0
-	locked = false
-	awarded = false
-	elapsed = 0
-	hint_label.text = ""
-	var seed_value := level * 7187 + mode * 99991
+	overlay.layout_direction = Control.LAYOUT_DIRECTION_RTL if profile.data.locale == 1 else Control.LAYOUT_DIRECTION_LTR
+	if not gameplay and name != "home":
+		var backdrop := ColorRect.new()
+		backdrop.color = Color(0.025, 0.041, 0.075, 0.93)
+		backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		overlay.add_child(backdrop)
+	ui = VBoxContainer.new()
+	ui.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	ui.offset_left = 36
+	ui.offset_right = -36
+	ui.offset_top = 42
+	ui.offset_bottom = -44
+	ui.add_theme_constant_override("separation", 13)
+	ui.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.add_child(ui)
+	var heading := label(ui, title, 73 if name == "home" else (52 if not gameplay else 38), ACCENT)
+	heading.add_theme_constant_override("outline_size", 4)
+	heading.add_theme_color_override("font_outline_color", Color("#071221"))
+
+func scroll_content() -> VBoxContainer:
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	ui.add_child(scroll)
+	var content := VBoxContainer.new()
+	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content.add_theme_constant_override("separation", 12)
+	scroll.add_child(content)
+	return content
+
+func show_home() -> void:
+	view.preview()
+	page("home", "HEXIVRA")
+	label(ui, tr_key("subtitle"), 24)
+	spacer(ui)
+	if not profile.data.active.is_empty():
+		button(ui, tr_key("continue"), resume_saved)
+	button(ui, tr_key("play"), func(): show_levels(0))
+	button(ui, tr_key("modes"), show_modes)
+	button(ui, tr_key("achievements"), show_achievements)
+	button(ui, tr_key("settings"), show_settings)
+	label(ui, tr_key("crystals") % profile.data.crystals, 22, ACCENT)
+
+func show_modes() -> void:
+	page("modes", tr_key("modes"))
+	var list := scroll_content()
+	for index in range(8):
+		var panel := PanelContainer.new()
+		var style := StyleBoxFlat.new()
+		style.bg_color = Color("#102139")
+		style.border_color = Color(MODE_COLOURS[index])
+		style.border_width_left = 4
+		style.content_margin_left = 14
+		style.content_margin_right = 14
+		style.content_margin_top = 8
+		style.content_margin_bottom = 11
+		panel.add_theme_stylebox_override("panel", style)
+		list.add_child(panel)
+		var card := VBoxContainer.new()
+		card.add_theme_constant_override("separation", 5)
+		panel.add_child(card)
+		var entry := button(card, mode_title(index), func(): show_levels(index), 48)
+		entry.add_theme_color_override("font_color", style.border_color)
+		label(card, Strings.RULES[index][profile.data.locale], 20)
+	button(ui, tr_key("back"), show_home)
+
+func show_levels(index: int) -> void:
+	mode = index
 	if mode == 7:
-		seed_value = Time.get_date_string_from_system().hash()
-	puzzle.generate(2 if level < 5 else 3, seed_value)
-	camera.size = 16 if level < 5 else 22
-	for p in puzzle.cells:
-		var tile := Node3D.new()
-		board.add_child(tile)
-		tile.position = world_pos(p)
-		tiles[p] = tile
-		rotations[p] = 0.0
-		var base := MeshInstance3D.new()
-		var mesh := CylinderMesh.new()
-		mesh.radial_segments = 6
-		mesh.top_radius = 0.96
-		mesh.bottom_radius = 0.96
-		mesh.height = 0.24
-		base.mesh = mesh
-		base.material_override = material(Color("#28364f"))
-		tile.add_child(base)
-		var arms: Array[MeshInstance3D] = []
-		for d in range(6):
-			if (int(puzzle.masks[p]) & (1 << d)) == 0:
-				continue
-			var direction := world_pos(puzzle.DIRS[d]).normalized()
-			var track := MeshInstance3D.new()
-			var line := BoxMesh.new()
-			line.size = Vector3(0.14,0.075,0.82)
-			track.mesh = line
-			track.position = direction * 0.41 + Vector3(0,0.16,0)
-			track.rotation.y = atan2(direction.x,direction.z)
-			tile.add_child(track)
-			arms.append(track)
-		tracks[p] = arms
+		start_level(1)
+		return
+	if mode == 6:
+		start_level(int(profile.data.progress.get(str(mode), 1)))
+		return
+	page("levels", mode_title(index))
+	label(ui, tr_key("levels"), 25)
+	label(ui, Strings.RULES[mode][profile.data.locale], 22)
+	var list := scroll_content()
+	var grid := GridContainer.new()
+	grid.columns = 4
+	grid.add_theme_constant_override("h_separation", 10)
+	grid.add_theme_constant_override("v_separation", 10)
+	list.add_child(grid)
+	var unlocked := int(profile.data.progress.get(str(mode), 1))
+	for i in range(1, Puzzle.COUNTS[mode] + 1):
+		var stars := int(profile.data.stars.get("%d:%d" % [mode, i], 0))
+		var caption := "%02d\n%s" % [i, "★".repeat(stars) if i <= unlocked else "▣"]
+		var entry := button(grid, caption, func(): start_level(i), 92)
+		for state in ["normal", "hover", "pressed", "disabled"]:
+			var style := StyleBoxTexture.new()
+			style.texture = LEVEL_STYLES[2 if state == "disabled" else int(state != "normal")]
+			entry.add_theme_stylebox_override(state, style)
+		entry.disabled = i > unlocked
+	button(ui, tr_key("back"), show_modes)
+
+func show_settings() -> void:
+	page("settings", tr_key("settings"))
+	var list := scroll_content()
+	label(list, tr_key("language"), 24, ACCENT)
+	for i in range(3):
+		button(list, ("✓  " if i == profile.data.locale else "") + LANGUAGES[i], func():
+			profile.data.locale = i
+			profile.store()
+			show_settings(), 56)
+	label(list, tr_key("quality"), 24, ACCENT)
+	var quality_row := HBoxContainer.new()
+	list.add_child(quality_row)
+	for i in range(3):
+		var key: String = ["low", "medium", "high"][i]
+		button(quality_row, ("✓  " if i == profile.data.quality else "") + tr_key(key), func():
+			profile.data.quality = i
+			view.set_quality(i)
+			profile.store()
+			show_settings(), 56)
+	for key in ["sound", "vibration"]:
+		var toggle := CheckButton.new()
+		toggle.text = tr_key(key)
+		toggle.button_pressed = profile.data[key]
+		toggle.custom_minimum_size.y = 57
+		toggle.add_theme_font_size_override("font_size", 26)
+		toggle.toggled.connect(func(enabled): profile.data[key] = enabled; profile.store())
+		list.add_child(toggle)
+	button(list, tr_key("privacy"), func(): OS.shell_open(PRIVACY_URL), 58)
+	if ads:
+		button(list, tr_key("petal_privacy"), show_petal_privacy, 58)
+	label(list, tr_key("privacy_detail"), 20)
+	label(list, "Hexivra 2.0.0", 20)
+	button(list, "Sci-Fi Laboratory · vinish.dev · CC BY 4.0", func():
+		OS.shell_open("https://vinish.dev/free-3d-models/sci-fi-laboratory"), 56)
+	button(ui, tr_key("back"), show_home)
+
+func show_petal_privacy() -> void:
+	page("petal_privacy", tr_key("petal_privacy"))
+	label(ui, tr_key("petal_detail"), 24)
+	button(ui, tr_key("petal_sdk_notice"), func():
+		OS.shell_open("https://developer.huawei.com/consumer/en/doc/hmscore-guides/whale-hong-kinetic-energy-sdk-privacy-statement-0000001658283582/"), 63)
+	spacer(ui)
+	button(ui, tr_key("petal_allow"), func(): set_test_ad_consent(true))
+	button(ui, tr_key("petal_revoke"), func(): set_test_ad_consent(false))
+	button(ui, tr_key("back"), show_settings)
+
+func set_test_ad_consent(allowed: bool) -> void:
+	profile.data.petal_consent = allowed
+	profile.store()
+	ads.commissioningConsent(allowed)
+	show_settings()
+
+func continue_to_next() -> void:
+	var next := level + 1
+	var now := Time.get_ticks_msec()
+	if ads and profile.data.wins % 3 == 0 and now - last_ad_ms >= 90000:
+		next_after_ad = next
+		page("transition", tr_key("next"))
+		if ads.betweenLevels():
+			last_ad_ms = now
+			spacer(ui)
+			button(ui, tr_key("continue"), finish_ad_transition)
+			return
+		next_after_ad = 0
+	start_level(next)
+
+func finish_ad_transition() -> void:
+	if next_after_ad > 0:
+		var target := next_after_ad
+		next_after_ad = 0
+		start_level(target)
+
+func show_achievements() -> void:
+	page("achievements", tr_key("achievements"))
+	label(ui, tr_key("wins") % profile.data.wins, 29)
+	label(ui, tr_key("xp") % [profile.data.xp, 1 + int(profile.data.xp / 150)], 26)
+	label(ui, tr_key("crystals") % profile.data.crystals, 26)
+	var progress := int(profile.data.mission.get("wins", 0)) if profile.data.mission.get("day") == today() else 0
+	label(ui, tr_key("mission") % mini(progress, 3), 24)
+	for i in range(2):
+		var earned: bool = profile.data.wins >= [1, 10][i]
+		label(ui, ("★  " if earned else "▣  ") + tr_key(["badge", "badge_10"][i]), 27, ACCENT if earned else INK)
+	spacer(ui)
+	for i in range(2):
+		var key: String = ["standard", "skin"][i]
+		var node := button(ui, ("✓  " if profile.data.skin == i else "") + tr_key(key), func():
+			profile.data.skin = i
+			profile.store()
+			show_achievements())
+		node.disabled = i == 1 and profile.data.wins < 10
+	button(ui, tr_key("back"), show_home)
+
+func start_level(index: int, saved := {}) -> void:
+	level = index
+	date = str(saved.get("date", today()))
+	moves = 0
+	elapsed = 0.0
+	hint_count = 0
+	last_save_second = -1
+	moving = false
+	puzzle.generate_level(mode, level, date)
+	if puzzle.cells.is_empty():
+		page("invalid", tr_key("invalid"))
+		button(ui, tr_key("back"), show_home)
+		return
+	if not saved.is_empty() and saved.get("masks", {}).size() == puzzle.cells.size():
+		var valid := true
+		for p in puzzle.cells:
+			if not saved.masks.has(p):
+				valid = false
+				break
+			var mask := int(saved.masks[p])
+			if not range(6).any(func(step): return Puzzle.rotate_mask(puzzle.solved[p], step) == mask):
+				valid = false
+				break
+		if valid:
+			puzzle.masks = saved.masks.duplicate()
+			puzzle.broken = saved.get("broken", puzzle.broken).duplicate()
+			puzzle.switches = saved.get("switches", puzzle.switches).duplicate()
+			puzzle.repairs = int(saved.get("repairs", puzzle.repairs))
+			puzzle.activated = int(saved.get("activated", 0))
+			moves = int(saved.get("moves", 0))
+			hint_count = int(saved.get("hint_count", 0))
+			elapsed = float(saved.get("elapsed", 0.0))
+	view.build(puzzle, profile.data.skin)
+	show_game()
+	if puzzle.is_solved():
+		finish()
+	else:
+		save_active()
+
+func resume_saved() -> void:
+	var saved: Dictionary = profile.data.active
+	mode = clampi(int(saved.get("mode", 0)), 0, 7)
+	start_level(maxi(int(saved.get("level", 1)), 1), saved)
+
+func save_active() -> void:
+	profile.data.active = {
+		"mode": mode, "level": level, "date": date,
+		"masks": puzzle.masks.duplicate(), "broken": puzzle.broken.duplicate(),
+		"switches": puzzle.switches.duplicate(), "repairs": puzzle.repairs,
+		"activated": puzzle.activated, "moves": moves, "elapsed": elapsed,
+		"hint_count": hint_count,
+	}
+	profile.store()
+
+func show_game() -> void:
+	page("game", mode_title(mode) + ("  /  " + str(level) if mode != 7 else ""), true)
+	label(ui, Strings.RULES[mode][profile.data.locale], 23)
+	var stats := HBoxContainer.new()
+	stats.alignment = BoxContainer.ALIGNMENT_CENTER
+	stats.add_theme_constant_override("separation", 38)
+	ui.add_child(stats)
+	move_label = label(stats, "", 24)
+	energy_label = label(stats, "", 24, ACCENT)
+	move_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	energy_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	progress_bar = ProgressBar.new()
+	progress_bar.show_percentage = false
+	progress_bar.custom_minimum_size.y = 12
+	var fill := StyleBoxFlat.new()
+	fill.bg_color = ACCENT
+	progress_bar.add_theme_stylebox_override("fill", fill)
+	ui.add_child(progress_bar)
+	task_label = label(ui, "", 24)
+	spacer(ui)
+	hint_label = label(ui, "", 25, ACCENT)
+	var actions := HBoxContainer.new()
+	actions.add_theme_constant_override("separation", 12)
+	ui.add_child(actions)
+	button(actions, tr_key("hint"), show_hint)
+	button(actions, tr_key("pause"), pause_game)
 	refresh()
 
 func refresh() -> void:
-	var power: Dictionary = puzzle.powered()
-	var on := material(Color("#00eaff"),true)
-	var off := material(Color("#536181"))
-	for p in tracks:
-		for arm in tracks[p]:
-			arm.material_override = on if power.has(p) else off
-	status.text = "Level %d | Moves %d | Power %d/%d" % [level,moves,power.size(),puzzle.cells.size()]
+	var state := puzzle.state()
+	view.refresh(puzzle, state)
+	move_label.text = tr_key("moves") % moves
+	energy_label.text = tr_key("energy") % [state.energy.size(), puzzle.cells.size()]
+	progress_bar.max_value = puzzle.cells.size()
+	progress_bar.value = state.energy.size()
+	if mode == 2:
+		task_label.text = tr_key("reactors") % [puzzle.activated, puzzle.reactors.size()]
+	elif mode == 5:
+		task_label.text = tr_key("repairs") % puzzle.repairs
+
+func show_hint() -> void:
+	if moving:
+		return
+	var hint := puzzle.hint()
+	if hint.is_empty():
+		return
+	hint_count += 1
+	view.show_hint(hint.cell)
+	hint_label.text = tr_key(hint.action) % hint.steps if hint.action == "rotate" else tr_key(hint.action)
+	save_active()
+
+func pause_game() -> void:
+	if moving:
+		return
+	save_active()
+	page("pause", tr_key("pause"))
+	spacer(ui)
+	button(ui, tr_key("continue"), show_game)
+	button(ui, tr_key("retry"), func(): start_level(level))
+	button(ui, tr_key("back"), show_home)
+
+func _process(delta: float) -> void:
+	if ads and screen in ["home", "game"]:
+		var pixel_height: int = ads.bannerHeightPx()
+		var ratio := overlay.size.y / maxf(1.0, get_window().size.y)
+		ui.offset_bottom = -44.0 - (pixel_height + 12) * ratio if pixel_height > 0 else -44.0
+	if screen == "game" and mode == 4 and not moving:
+		elapsed += delta
+		var remaining := maxi(0, ceili(puzzle.time_limit - elapsed))
+		task_label.text = tr_key("timer") % remaining
+		if remaining != last_save_second and remaining % 5 == 0:
+			last_save_second = remaining
+			save_active()
+		if remaining == 0:
+			page("timeout", tr_key("timeout"))
+			spacer(ui)
+			button(ui, tr_key("retry"), func(): start_level(level))
+			button(ui, tr_key("back"), show_home)
+
+func finish() -> void:
+	var rating := 3 if moves <= puzzle.par and hint_count == 0 else (2 if moves <= puzzle.par * 2 else 1)
+	var key := "%d:%s" % [mode, date if mode == 7 else str(level)]
+	var gain := profile.reward(key, mode, level, rating, today(), Puzzle.COUNTS[mode])
+	play_sound("success")
+	view.celebrate()
+	if profile.data.vibration:
+		Input.vibrate_handheld(65)
+	page("victory", tr_key("victory"), true)
+	label(ui, "★".repeat(rating) + "☆".repeat(3 - rating), 63, Color("#ffd782"))
+	label(ui, tr_key("gain") % gain, 27)
+	label(ui, tr_key("moves") % moves, 24)
+	spacer(ui)
+	if mode == 6 or (mode < 6 and level < Puzzle.COUNTS[mode]):
+		button(ui, tr_key("next"), continue_to_next)
+	button(ui, tr_key("retry"), func(): start_level(level))
+	button(ui, tr_key("back"), show_home)
+
+func interact(p: Vector2i) -> void:
+	if screen != "game" or moving:
+		return
+	var action := puzzle.act(p)
+	if action.is_empty():
+		return
+	moves += 1
+	view.clear_hint()
+	hint_label.text = ""
+	play_sound(action if action != "switch" else "repair")
+	if profile.data.vibration:
+		Input.vibrate_handheld(24)
+	if action == "rotate":
+		moving = true
+		await view.spin(p).finished
+		moving = false
+	refresh()
 	if puzzle.is_solved():
-		status.text += " | COMPLETE"
-		if not awarded:
-			awarded = true
-			crystals += 3
-			progress[str(mode)] = maxi(int(progress.get(str(mode),1)),level+1 if counts[mode]==0 else mini(level+1,counts[mode]))
-			save_progress()
-			hint_label.text = "Complete! +3 energy | Total: %d" % crystals
+		finish()
+	else:
+		save_active()
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_PAUSED and screen == "game":
+		save_active()
 
 func _unhandled_input(event: InputEvent) -> void:
+	if screen != "game" or moving:
+		return
 	var point: Vector2
-	if event is InputEventScreenTouch and event.pressed:
+	if event is InputEventScreenTouch and event.pressed and event.index == 0:
 		point = event.position
 	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		if event.device == InputEvent.DEVICE_ID_EMULATION:
+			return
 		point = event.position
 	else:
 		return
-	if locked or puzzle.is_solved():
-		return
-	var origin := camera.project_ray_origin(point)
-	var direction := camera.project_ray_normal(point)
-	var hit = Plane(Vector3.UP,0).intersects_ray(origin,direction)
-	if hit == null:
-		return
-	for p in tiles:
-		if world_pos(p).distance_to(hit) < 0.9:
-			locked = true
-			puzzle.masks[p] = puzzle.rotate_mask(puzzle.masks[p])
-			moves += 1
-			rotations[p] = float(rotations[p]) - PI/3
-			var tween := create_tween()
-			tween.tween_property(tiles[p],"rotation:y",rotations[p],0.16)
-			await tween.finished
-			locked = false
-			refresh()
-			break
+	var cell: Variant = view.cell_at(point)
+	if cell != null:
+		interact(cell)
