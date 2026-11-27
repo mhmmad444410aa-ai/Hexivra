@@ -53,6 +53,7 @@ jobs:
           unzip -q "$RUNNER_TEMP/build-tools.zip" -d "$ANDROID_HOME/build-tools"
           mv "$ANDROID_HOME/build-tools/android-16" "$ANDROID_HOME/build-tools/36.0.0"
           echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
           printf '[gd_resource type="EditorSettings" format=3]\n\n[resource]\nexport/android/android_sdk_path = "%s"\nexport/android/java_sdk_path = "%s"\n' "$ANDROID_HOME" "$JAVA_HOME" > "$HOME/.config/godot/editor_settings-4.7.tres"
       - name: Import and test
         shell: bash
@@ -155,6 +156,8 @@ jobs:
           "$ANDROID_HOME/build-tools/36.1.0/apksigner" verify --print-certs "$apk" > "$apk.cert.txt"
           "$ANDROID_HOME/build-tools/36.1.0/aapt" dump badging "$apk" > "$apk.metadata.txt"
           grep -F "package: name='com.mhmmad.hexivra.petaltest'" "$apk.metadata.txt"
+          "$ANDROID_HOME/build-tools/36.1.0/aapt" dump permissions "$apk" > "$apk.permissions.txt"
+          if grep -E 'ACCESS_FINE_LOCATION|ACCESS_COARSE_LOCATION|READ_PHONE_STATE|QUERY_ALL_PACKAGES|REQUEST_INSTALL_PACKAGES|MANAGE_FOLD_SCREEN' "$apk.permissions.txt"; then exit 1; fi
           (cd "$RUNNER_TEMP/petal" && sha256sum *.apk > SHA256SUMS.txt)
       - uses: actions/upload-artifact@v4
         if: ${{ inputs.petal_test && !inputs.publish }}
