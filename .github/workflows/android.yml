@@ -10,6 +10,10 @@ on:
         description: Publish a signed production release
         type: boolean
         default: false
+      petal_test:
+        description: Also build the isolated Huawei test APK
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -115,10 +119,48 @@ jobs:
           (cd build && sha256sum *.apk > SHA256SUMS.txt)
           stat -c '%s bytes' "$apk" > "$apk.size.txt"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          cat build/SHA256SUMS.txt "$apk.size.txt"
+          grep -E '^Signer #1 certificate SHA-256 digest:' "$apk.cert.txt"
+          {
+            echo '### Android APK'
+            echo '```text'
+            grep -E '^(package:|sdkVersion:|targetSdkVersion:|native-code:)' "$apk.metadata.txt"
+            cat build/SHA256SUMS.txt "$apk.size.txt"
+            grep -E '^Signer #1 certificate SHA-256 digest:' "$apk.cert.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
           name: Hexivra-Android
           path: build/
+          if-no-files-found: error
+
+      - name: Build Petal test APK
+        if: ${{ inputs.petal_test && !inputs.publish }}
+        shell: bash
+        env:
+          GODOT_ANDROID_KEYSTORE_DEBUG_USER: androiddebugkey
+          GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD: android
+        run: |
+          export GODOT_ANDROID_KEYSTORE_DEBUG_PATH="$RUNNER_TEMP/debug.keystore"
+          curl -fsSL --retry 3 https://dl.google.com/android/repository/platform-36_r02.zip -o "$RUNNER_TEMP/platform36.zip"
+          curl -fsSL --retry 3 https://dl.google.com/android/repository/build-tools_r36.1_linux.zip -o "$RUNNER_TEMP/buildtools361.zip"
+          mkdir -p "$ANDROID_HOME/platforms" "$RUNNER_TEMP/buildtools361" "$RUNNER_TEMP/petal"
+          unzip -q "$RUNNER_TEMP/platform36.zip" -d "$ANDROID_HOME/platforms"
+          unzip -q "$RUNNER_TEMP/buildtools361.zip" -d "$RUNNER_TEMP/buildtools361"
+          mv "$RUNNER_TEMP/buildtools361/android-16" "$ANDROID_HOME/build-tools/36.1.0"
+          unzip -p "$RUNNER_TEMP/templates.tpz" templates/android_source.zip > "$RUNNER_TEMP/android_source.zip"
+          apk="$RUNNER_TEMP/petal/Hexivra-petal-test.apk"
+          android-petal/build-test.sh "$RUNNER_TEMP/android_source.zip" "$apk"
+          "$ANDROID_HOME/build-tools/36.1.0/apksigner" verify --print-certs "$apk" > "$apk.cert.txt"
+          "$ANDROID_HOME/build-tools/36.1.0/aapt" dump badging "$apk" > "$apk.metadata.txt"
+          grep -F "package: name='com.mhmmad.hexivra.petaltest'" "$apk.metadata.txt"
+          (cd "$RUNNER_TEMP/petal" && sha256sum *.apk > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        if: ${{ inputs.petal_test && !inputs.publish }}
+        with:
+          name: Hexivra-Petal-Test
+          path: ${{ runner.temp }}/petal/
           if-no-files-found: error
 
   publish:
