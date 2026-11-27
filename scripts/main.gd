@@ -11,6 +11,48 @@ var status := Label.new()
 var level := 1
 var moves := 0
 var locked := false
+var mode := 0
+var mode_names = ["Classic","Multi Energy","Reactor","Laser","Time Challenge","Broken Circuit","Endless","Daily Challenge"]
+var counts = [100,80,60,60,50,50,0,0]
+var progress = {}
+var crystals := 0
+var elapsed := 0.0
+var awarded := false
+var hint_label := Label.new()
+
+func load_progress() -> void:
+	var cfg := ConfigFile.new()
+	if cfg.load("user://progress.cfg") == OK:
+		progress = cfg.get_value("game","progress",{})
+		crystals = cfg.get_value("game","crystals",0)
+
+func save_progress() -> void:
+	var cfg := ConfigFile.new()
+	cfg.set_value("game","progress",progress)
+	cfg.set_value("game","crystals",crystals)
+	cfg.save("user://progress.cfg")
+
+func _process(delta: float) -> void:
+	if mode == 4 and not awarded and not locked:
+		elapsed += delta
+		hint_label.text = "Time: %d s" % maxi(0,120-int(elapsed))
+		if elapsed >= 120:
+			locked = true
+			hint_label.text = "Time expired — restart"
+
+func hint() -> void:
+	if locked or awarded or crystals < 1:
+		return
+	for p in puzzle.cells:
+		if puzzle.masks[p] != puzzle.solved[p]:
+			crystals -= 1
+			save_progress()
+			hint_label.text = "Hint: highlighted tile"
+			var tween := create_tween()
+			tween.tween_property(tiles[p],"position:y",0.35,0.15)
+			tween.tween_property(tiles[p],"position:y",0.0,0.25)
+			return
+
 
 func material(c: Color, emission: bool = false) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
@@ -24,6 +66,7 @@ func material(c: Color, emission: bool = false) -> StandardMaterial3D:
 	return m
 
 func _ready() -> void:
+	load_progress()
 	add_child(board)
 	add_child(camera)
 	camera.position = Vector3(0,12,0)
@@ -53,6 +96,20 @@ func _ready() -> void:
 	menu.add_child(title)
 	status.add_theme_font_size_override("font_size",24)
 	menu.add_child(status)
+	var selector := OptionButton.new()
+	for i in range(mode_names.size()):
+		selector.add_item(mode_names[i],i)
+	menu.add_child(selector)
+	selector.item_selected.connect(func(index):
+		mode = index
+		level = int(progress.get(str(mode),1))
+		start_level()
+	)
+	menu.add_child(hint_label)
+	var hint_button := Button.new()
+	hint_button.text = "Hint"
+	menu.add_child(hint_button)
+	hint_button.pressed.connect(hint)
 	var retry := Button.new()
 	retry.text = "Restart"
 	retry.custom_minimum_size = Vector2(160,54)
@@ -64,8 +121,9 @@ func _ready() -> void:
 	menu.add_child(next)
 	next.pressed.connect(func():
 		if puzzle.is_solved():
-			level += 1
-			start_level()
+			if counts[mode] == 0 or level < counts[mode]:
+				level += 1
+				start_level()
 	)
 	start_level()
 
@@ -81,7 +139,13 @@ func start_level() -> void:
 	rotations.clear()
 	moves = 0
 	locked = false
-	puzzle.generate(2 if level < 5 else 3, level * 7187)
+	awarded = false
+	elapsed = 0
+	hint_label.text = ""
+	var seed_value := level * 7187 + mode * 99991
+	if mode == 7:
+		seed_value = Time.get_date_string_from_system().hash()
+	puzzle.generate(2 if level < 5 else 3, seed_value)
 	camera.size = 16 if level < 5 else 22
 	for p in puzzle.cells:
 		var tile := Node3D.new()
@@ -124,6 +188,12 @@ func refresh() -> void:
 	status.text = "Level %d | Moves %d | Power %d/%d" % [level,moves,power.size(),puzzle.cells.size()]
 	if puzzle.is_solved():
 		status.text += " | COMPLETE"
+		if not awarded:
+			awarded = true
+			crystals += 3
+			progress[str(mode)] = maxi(int(progress.get(str(mode),1)),level+1 if counts[mode]==0 else mini(level+1,counts[mode]))
+			save_progress()
+			hint_label.text = "Complete! +3 energy | Total: %d" % crystals
 
 func _unhandled_input(event: InputEvent) -> void:
 	var point: Vector2
